@@ -1,0 +1,169 @@
+---
+title: "Data Preparation"
+author: "Lisa Dickel"
+date: "November 12, 2018"
+output: html_document
+---
+
+##Packages
+
+```{r}
+library(tidyverse)
+library(readr)
+library(GGally)
+library(ggplot2)
+library(corrplot)
+library(ggmosaic)
+#library(brms)
+library(rstanarm)
+library(gridExtra)
+library(ggmap)
+library(mapr)
+library(simba)
+library(lme4)
+library(unmarked)
+```
+
+
+```{r, results='hide', message=FALSE}
+# import the data 
+data_plot <- read.table("plot.csv", header = TRUE, stringsAsFactors = FALSE, sep = ",")
+data_water <- read.table("water.csv", header = TRUE,stringsAsFactors = FALSE, sep = ",")
+data_site <- read.table("site.csv", header = TRUE, stringsAsFactors = FALSE, sep = ",")
+
+# the Koppang Site goes out for now, there was just an empty nurseery web without any information about occurrence at this site.. 
+data_site <- data_site[-c(27, 28), ]
+
+
+# make a new dataset with the Braun Blanquet Scale replaced with "pseudo" continuous values 
+# to have less parameters for modelling process 
+# using package simba  
+
+species_matrix <- data_plot %>%
+  select(Carex, Juncus, Typha, Phragmites, sphagnum, aquaticPlants, decidiousPlants, tussocs, crossingStr)
+as.matrix(species_matrix)
+
+new_species <- bb2num(species_matrix, from = c("r", "+", "1", "2", "3", "4", "5"),
+to = c(0.1, 1, 5, 15, 37.5, 62.5, 87.5))
+new_species <- as.data.frame(new_species)
+
+
+
+# add the variable to my dataframe 
+
+data_plot$CarexN <- new_species$Carex
+data_plot$JuncusN <- new_species$Juncus
+data_plot$TyphaN <- new_species$Typha
+data_plot$PhragmitesN <- new_species$Phragmites
+data_plot$sphagnumN <- new_species$sphagnum
+data_plot$aquaticPlantsN <-new_species$aquaticPlants
+data_plot$decidiousPlantsN <- new_species$decidiousPlants
+data_plot$tussocsN  <- new_species$tussocs
+data_plot$crossingStr <- new_species$crossingStr
+
+
+# gather the avg heights 
+data_plot_new <- data_plot %>%
+  gather(starts_with("avgHeight"), key = "avgHeight_name", value = "avgHeight")
+
+# split plot specific data for nursery and for transects 
+
+# subset nursery data set 
+Nursery2 <- data_plot_new %>%
+  filter(plotType == "nursery_search")
+
+# subset transect plots 
+transect_plot <- data_plot_new %>%
+  filter(plotType =="shore_transect")
+
+summary(transect_plot)
+
+
+# build the data sets with water & site information 
+# 1. for the transects 
+
+Nursery2$siteID <- as.character(Nursery2$siteID)
+Nursery2$transectID <- as.character(Nursery2$transectID)
+transect_plot$transectID <- as.character(transect_plot$transectID)
+transect_plot$siteID <- as.character(transect_plot$siteID)
+data_site$siteID <- as.character(data_site$siteID)
+data_plot_new$siteID <- as.character(data_plot_new$siteID)
+data_water$siteID <- as.character(data_water$siteID)
+data_water$transectID <- as.character(data_water$transectID)
+
+
+# Nursery --> here I have a problem with the water information,which is transect specific, but here we have no transect assigned to each Nursery. 
+
+Nursery <- inner_join(Nursery2, data_site, by = "siteID")
+
+# transect plots 
+dat2 <- inner_join(transect_plot, data_site, by = "siteID")
+dat <- inner_join(dat2, data_water, by = c("siteID", "transectID"))
+```
+
+
+## plot as repeated observations 
+
+```{r}
+## gather all variables 
+plot_unm <- data_plot %>%
+  gather(variable, values, -plotID, -siteID) %>%
+  unite("sitePlotID", siteID, plotID)%>%
+ # arrange(siteID, plotID)%>%
+  # group_by(siteID)%>%
+  spread(key ="sitePlotID", value = "values")
+  
+
+  
+  split(plot_unm, f = plot_unm$variable)
+  
+
+## split the dataframe by variable, so I get one dataframe per variable in a list
+
+
+
+# ungroup before splitting to keep the original variable name (?) 
+
+# for each group / dataframe ,I spread(), new columns: plot names 
+# map / lapply: apply the same function to each element of a list ->  I do not need this anymore, because of grouping? really not?!
+
+
+# plotList %>%
+#   map %>%
+#   (spread(key = plotList$plotID))
+# 
+# plotList %>%
+#   spread(key = plotID)
+```
+
+
+## add new column for GBIF 0/1
+```{r}
+data_site$gbif_bin %>% mutate(ifelse(reasonVisit == gbif_position , 1, ifelse(reasonVisit != gbif_position, 0)))
+
+# this did not work, therefore: 
+
+  gbif_new <- data_site %>%
+          filter(reasonVisit == "gbif_position") %>%
+          mutate(gbif_bin = 1)
+  gbif_new2 <- data_site %>%
+    filter(reasonVisit != "gbif_position") %>%
+    mutate(gbif_bin = 0)
+  site <- rbind(gbif_new, gbif_new2)
+  
+```
+
+
+
+
+```{r}
+
+jhfj <- dat %>%
+  group_by(siteID)%>%
+  filter(transectID == max(transectID))
+
+dat
+         
+         
+```
+

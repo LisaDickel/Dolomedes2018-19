@@ -1,0 +1,566 @@
+---
+title: "Data Preparation and Exploration"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r echo=FALSE, results='hide', message=FALSE}
+library(tidyverse)
+library(readr)
+library(GGally)
+library(ggplot2)
+library(corrplot)
+library(ggmosaic)
+library(brms)
+library(rstanarm)
+library(gridExtra)
+library(ggmap)
+library(mapr)
+library(simba)
+library(lme4)
+library(FSA)
+
+```
+
+# Data Preparation 
+
+One thing here is not yet in order: the water information for the nurserys, as it is "per transect", but the nursery is not assigned to any transect. I think some water information could be important for the nursery. On the other hand, nursery is dependend on occurrence and occurrence I can model with the "normal" transect plots. 
+
+```{r, results='hide', message=FALSE}
+# import the data 
+data_plot <- read.table("plot.csv", header = TRUE, stringsAsFactors = FALSE, sep = ",")
+data_water <- read.table("water.csv", header = TRUE,stringsAsFactors = FALSE, sep = ",")
+data_site <- read.table("site.csv", header = TRUE, stringsAsFactors = FALSE, sep = ",")
+
+# the Koppang Site goes out for now, there was just an empty nurseery web without any information about occurrence at this site.. 
+data_site <- data_site[-c(27, 28), ]
+
+
+# make a new dataset with the Braun Blanquet Scale replaced with "pseudo" continuous values 
+# to have less parameters for modelling process 
+# using package simba  
+
+species_matrix <- data_plot %>%
+  select(Carex, Juncus, Typha, Phragmites, sphagnum, aquaticPlants, decidiousPlants, tussocs, crossingStr)
+as.matrix(species_matrix)
+
+new_species <- bb2num(species_matrix, from = c("r", "+", "1", "2", "3", "4", "5"),
+to = c(0.1, 1, 5, 15, 37.5, 62.5, 87.5))
+as.data.frame(new_species)
+
+# add the variable to my dataframe 
+
+data_plot$CarexN <- new_species$Carex
+data_plot$JuncusN <- new_species$Juncus
+data_plot$TyphaN <- new_species$Typha
+data_plot$PhragmitesN <- new_species$Phragmites
+data_plot$sphagnumN <- new_species$sphagnum
+data_plot$aquaticPlantsN <-new_species$aquaticPlants
+data_plot$decidiousPlantsN <- new_species$decidiousPlants
+data_plot$tussocsN  <- new_species$tussocs
+data_plot$crossingStr <- new_species$crossingStr
+
+
+# gather the avg heights 
+data_plot_new <- data_plot %>%
+  gather(starts_with("avgHeight"), key = "avgHeight_name", value = "avgHeight")
+
+# split plot specific data for nursery and for transects 
+
+# subset nursery data set 
+Nursery2 <- data_plot_new %>%
+  filter(plotType == "nursery_search")
+
+# subset transect plots 
+transect_plot <- data_plot_new %>%
+  filter(plotType =="shore_transect")
+
+
+# build the data sets with water & site information 
+# 1. for the transects 
+
+Nursery2$siteID <- as.character(Nursery2$siteID)
+Nursery2$transectID <- as.character(Nursery2$transectID)
+transect_plot$transectID <- as.character(transect_plot$transectID)
+transect_plot$siteID <- as.character(transect_plot$siteID)
+data_site$siteID <- as.character(data_site$siteID)
+data_plot_new$siteID <- as.character(data_plot_new$siteID)
+data_water$siteID <- as.character(data_water$siteID)
+data_water$transectID <- as.character(data_water$transectID)
+
+
+# Nursery --> here I have a problem with the water information,which is transect specific, but here we have no transect assigned to each Nursery. 
+
+Nursery <- inner_join(Nursery2, data_site, by = "siteID")
+
+# transect plots 
+dat2 <- inner_join(transect_plot, data_site, by = "siteID")
+dat <- inner_join(dat2, data_water, by = c("siteID", "transectID"))
+
+
+
+
+
+```
+
+# Data Exploration 
+
+- I went roughly through the protocol for data exploration by Zuur et al.   
+
+## Relationship X & Y
+
+### Cover, Vegetation Height & Humidity 
+
+Horizontal Vegetation Cover:   
+
+- Plantarius is associated with quite dense vegetation, also still at 50 cm height while this is not the case for fimbriatus.   
+- Where both species occurre the vegetation is also dense on all 3 levels of height.   
+
+Vegetation Height:  
+
+- Average and maximim height are on average heighest where both species occurre (but this are very few sites.. )  
+- In "plantarius sites" the height might be higer than in the "fimbriatus sites"  
+
+
+Humidity:   
+
+- The humidity is lower for fimbriatus sites than for plantarius and double-species-sites (this makes sense as we found fimbriatus also in medows etc.) But according to the boxplots there are not really big differences here. I think the measurement was not really great, as the values were changing a lot up and down during the measurement.. 
+
+```{r echo=FALSE}
+
+### avg Height ~ Species ####
+p1 <- ggplot(dat, aes(x=Species, y=avgHeight)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Average Vegetation Height")
+
+### horizontal veg cover 10 cm ~ Species ####
+p2 <-ggplot(dat, aes(x=Species, y=horizCover10cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+### horizontal veg cover 30 cm ~ Species ####
+p3 <- ggplot(dat, aes(x=Species, y=horizCover30cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+### horizontal veg cover 50 cm ~ Species ####
+p4 <- ggplot(dat, aes(x=Species, y=horizCover50cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+
+### max height ~ Species ####
+p5 <- ggplot(dat, aes(x=Species, y=maxHeight)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Maximum Vegetation Height")
+
+
+
+##### Humidity ##### 
+p6 <- ggplot(dat, aes(x=Species, y=humidityGround)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Humidity at Ground Level")
+
+p7 <- ggplot(dat, aes(x=Species, y=humidity20cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Humidity at 20 cm Height")
+
+
+
+grid.arrange(p1, p5, 
+             nrow = 1)
+grid.arrange(p2,p3, p4, 
+             nrow = 1, 
+             top = "Horizontal Vegetation Cover at 10 / 30 / 50  cm Height" )
+grid.arrange(p6, p7, nrow = 1, newpage = TRUE)
+
+```
+
+
+### Braun - Blanquet - Variables 
+
+- Typha, Carex, Phragmites more in plantarius & double species sites than in fimbriatus sites.   
+- Sphagnum more present in fimbriatus sites (much more..) than in plantarius sites. --> reflecting that they like bogs and marshy areas. This might be correlated with the coniferous trees in the surrounding? As marshed & coniferous trees create sour soil conditions?   
+- Some of the interresting plants for fimbriatus (or also for Dolomedes in general) were not in the protocol, first of all Equisetum, but also other plants. I dont know how it would be possible to classify plants according to their "texture" and how they are build (e.g. distance of leafes ot each other, thickness of the stem, several stems or only one..?) --> think about this and discuss it! -> as this is a "pilot"   
+- There is a higher proportion of tussocs in the plantarius sites (which should be correlated with Carex occurrence)
+- Higer proportion of many crossing structures in plantarius sites -> interresting! 
+- on plot level fimbriatus is more associated with deciduous plants then plantarius  
+- on site / surrounding level fimbriatus is more associated with deciduous trees 
+- more often aquatic plants in plots of plantarius sites
+
+
+```{r, echo=FALSE}
+# order levels of braun-blanquet variables 
+dat$Carex <- ordered(dat$Carex, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$Typha <- ordered(dat$Typha, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$Juncus <- ordered(dat$Juncus, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$Phragmites <- ordered(dat$Phragmites, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$sphagnum <- ordered(dat$sphagnum, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$tussocs <- ordered(dat$tussocs, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$crossingStr <- ordered(dat$crossingStr, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+dat$decidiousPlants <- ordered(dat$decidiousPlants, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+
+# do the same for Nursery subset 
+Nursery$Carex <- ordered(Nursery$Carex, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$Typha <- ordered(Nursery$Typha, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$Juncus <- ordered(Nursery$Juncus, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$Phragmites <- ordered(Nursery$Phragmites, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$sphagnum <- ordered(Nursery$sphagnum, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$tussocs <- ordered(Nursery$tussocs, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$crossingStr <- ordered(Nursery$crossingStr, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+Nursery$decidiousPlants <- ordered(Nursery$decidiousPlants, levels = c("no", "r", "+" , "1" , "2a" , "2b" , "3" , "4" , "5" ))
+
+
+#### Braun Blanquet Plots ##### 
+
+
+# Typha 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(Typha), fill=Typha), na.rm=TRUE) +  labs(x = "Typha ", title='Typha & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(Typha), fill=Typha), na.rm=TRUE) +  labs(x = "Typha ", title='Typha & Nursery web placement') + facet_grid(Species~.)
+
+# Carex 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(Carex), fill=Carex), na.rm=TRUE) +  labs(x = "Carex ", title='Carex & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(Carex), fill=Carex), na.rm=TRUE) +  labs(x = "Carex ", title='Carex & Nursery Placement') + facet_grid(Species~.)
+
+
+# Juncus 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(Juncus), fill=Juncus), na.rm=TRUE) +  labs(x = "Juncus ", title='Juncus & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(Juncus), fill=Juncus), na.rm=TRUE) +  labs(x = "Juncus ", title='Juncus & Nursery Placement') + facet_grid(Species~.)
+
+# Phragmites
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(Phragmites), fill=Phragmites), na.rm=TRUE) +  labs(x = "Phragmites ", title='Phragmites & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(Phragmites), fill=Phragmites), na.rm=TRUE) +  labs(x = "Phragmites ", title='Phragmites & Nursery Web Placement') + facet_grid(Species~.)
+
+
+# Sphagnum 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(sphagnum), fill=sphagnum), na.rm=TRUE) +  labs(x = "Sphagnum ", title='Sphagnum & Dolomedes Occurrence') +
+  facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(sphagnum), fill=sphagnum), na.rm=TRUE) +  labs(x = "Sphagnum ", title='Sphagnum & Nursery Web Placement')+
+  facet_grid(Species~.)
+
+# tussocs 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(tussocs), fill=tussocs), na.rm=TRUE) +  labs(x = "tussocs ", title='tussocs & Dolomedes Occurrence') + 
+  facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(tussocs), fill=tussocs), na.rm=TRUE) +  labs(x = "tussocs ", title='tussocs & Nursery web Placement')+ 
+  facet_grid(Species~.)
+
+# crossing structures 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(crossingStr), fill=crossingStr), na.rm=TRUE) +  labs(x = "Crossing Structures", title='Crossing Plant Structures & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(crossingStr), fill=crossingStr), na.rm=TRUE) +  labs(x = "Crossing Structures", title='Crossing Plant Structures & Nursery Web Placement') + facet_grid(Species~.)
+
+# deciduous plants 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(decidiousPlants), fill=decidiousPlants), na.rm=TRUE) +  labs(x = "deciduos Plants", title='deciduous Plants and Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(decidiousPlants), fill=decidiousPlants), na.rm=TRUE) +  labs(x = "deciduos Plants", title='deciduous Plants and Nursery Web Placement') + facet_grid(Species~.)
+
+# aquatic plants 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(aquaticPlants), fill=aquaticPlants), na.rm=TRUE) +  labs(x = "aquatic Plants", title='aquatic Plants & Dolomedes Occurrence') + facet_grid(Species~.)
+
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(aquaticPlants), fill=aquaticPlants), na.rm=TRUE) +  labs(x = "aquatic Plants", title='aquatic Plants & Nursery Web Placement') + facet_grid(Species~.)
+```
+
+### Other Vegetation Variables 
+
+- Even though the variables here are very unspecific,there are some interesting things to see. All sites with D. fimbriatus were in the forest, while the surrounding of sites with D. plantarius are very variable.   
+- There seems to be a tendency for D. fimbriatus rather being close to coniferous forest, while D. plantarius is somehow rather associated with deciduous trees.   
+- D. fimb sites are more varibale than D. plantarius sites..  
+ [Here is still some data cleaning to do --> plant names]
+
+```{r, echo=FALSE}
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(veg_type_site), fill=veg_type_site), na.rm=TRUE) +  labs(x = "water speed ", title='water speed') + facet_grid(Species~.)
+
+# big leafs
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(bigLeaves), fill=bigLeaves), na.rm=TRUE) +  labs(x = "big Leafs ", title='"big" leafs present in plot') + facet_grid(Species~.)
+
+
+
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(surr_forest), fill=surr_forest), na.rm=TRUE) +  labs(x = "surrounding forest ", title='Surrounding Forest') + facet_grid(Species~.)
+# this is interesting! Only plantarius in decidious forest?!
+
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(surrounding), fill=surrounding), na.rm=TRUE) +  labs(x = "Surrounding ", title='Surrounding') + facet_grid(Species~.)
+# this is also interresting! Fimbriatus always in the forest?!
+
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(dominant_tree_site), fill=dominant_tree_site), na.rm=TRUE) +  labs(x = "dominant Tree", title='Dominant Tree Species') + facet_grid(Species~.)
+
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(dominant_plant_group1), fill=dominant_plant_group1), na.rm=TRUE) +  labs(x = "dominant plant group", title='Dominant Plant Group') + facet_grid(Species~.)
+
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(dominant_plant_group2), fill=dominant_plant_group2), na.rm=TRUE) +  labs(x = "dominant Plant  Group", title='Dominant Plant Group 2') + facet_grid(Species~.)
+
+
+
+```
+
+## Vegetation: Correlation & PCA
+
+- I transformed the BB levels to numeric variables (package: simba) to reduce the complexity of my models later 
+- using the transformed BB variable 
+- carex/ phragmites and crossing structures are correlated (a little bit)
+- tussocs and carex not really (which I expected)
+
+- The PCA is not really useful, I have to go back to my transformation values (they are not based on any literature or a lot of thinking yet and make a new decision). Carex and deciduous plants seem to "point" in different directions and as well sphagnum and crossing structures. I do not know yet, if I can use the axis..
+- I maybe have to also think about building indices for vegetation complexity to reduce the number of predictors in my models.. 
+
+
+```{r}
+pr <- prcomp(new_species)
+plot(pr)
+biplot(pr)
+
+library(corrplot)
+corSp <- cor(new_species, method = "spearman")
+corrplot(corSp)
+```
+
+
+
+
+## Other Variables 
+
+- there is not much difference to see here for shade tolerance, but a bit less shade in the plantarius sites   
+- a bit less litter in plots in sites with plantarius than in sites with fimbriatus 
+- might be correlated with deciduous plants
+
+
+```{r}
+# shade 
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(shade), fill=shade), na.rm=TRUE) +  labs(x = "Shade", title='Shade') + facet_grid(Species~.)
+
+# litter
+ggplot(data = dat) +
+  geom_mosaic(aes(x = product(litter), fill=litter), na.rm=TRUE) +  labs(x = "dominant Plant  Group", title='Dominant Plant Group 2') + facet_grid(Species~.)
+```
+
+
+## Variables to work on 
+
+- altitude -> extract from GIS   
+- Cattle grazing on sites yes / no 
+- bring positions in a map 
+- translate detection-non detection of sites to plot level for the multilevel-occupancy model 
+- assumption: the species detected on the site level is the same as detected on plot level
+- does not work for the 2-species sites? except Jeremy has the coordinates + species 
+
+
+## Searching for Correlations between Explanatory Variables 
+
+This is a bit tricky with so many categorical variables, but I try to think about, what might be correlated and plot those things:   
+
+- Sphagnum & Forest type     
+- Sphagnum & dominant tree at site     
+- Sphagnum & surrounding forest type / surrounding     
+- Carex & tussocs (not really correlated)
+
+- I do not need to be as afraid of correlations when I use a MCMC sampler on the posterior compared to maximum likelihood (I think? -> Because I can see, if it converges or not, so the estimate does not unnoticed get "trapped" in a correlation?)
+
+
+## Searching for possible Interactions 
+
+- I guess, that somehow the profit a species takes from vegetation qualities are dependend on present water qualities, at least for plantarius, there might be some interactions there
+-> if water qualities are not there, "high quality vegetation" does not help anything for occupation of the habitat..
+- I think there are some interactions like this in the data, as the value of the other properties depends on water and maybe temperature, humidity, sun.. but I cannot include those things, as they make my models too complicated compared to the low number of observations I have. 
+
+
+## Independence of Y
+
+- I guess it is not, where locations were not too far from each other.
+- how do I include the spatial component here? 
+- Finding Nurserys might be dependend on Place & time 
+- **Solution:** Variogram to find spatial correlations 
+
+
+## Normality Y, Zero trouble, Homogenieity y 
+
+- Normality is not a problem for binomial or categorical responses (I think)  
+- zero inflation through non-detections? 
+
+# Nursery Data 
+
+```{r echo=FALSE}
+# Host Plants 
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(nursery_plant), fill=nursery_plant), na.rm=TRUE) +  labs(x = "Nursery Web Host Plants", title='Nursery Web Host Plants') + facet_grid(Species~.)
+
+# Shade 
+ggplot(data = Nursery) +
+  geom_mosaic(aes(x = product(shade), fill=shade), na.rm=TRUE) +  labs(x = "Shade in Nursery Plots", title='Shade in Nursery Plots') + facet_grid(Species~.)
+```
+
+
+
+```{r echo=FALSE}
+# Number of Nurserys 
+ggplot(Nursery, aes(x=Species, y=NrNurserysInPlot)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Number of Nursery Webs per Plot")
+
+# distance to water 
+#ggplot(Nursery, aes(y=distanceWater)) + 
+#  geom_boxplot(outlier.colour="red", outlier.shape=8,
+ #              outlier.size=4)+
+ # ggtitle("Number of Nursery Webs per Plot")
+
+# Height of Nursery webs per Species
+ggplot(Nursery, aes(x=Species, y=nursery_hight)) + 
+  geom_point()+
+  ggtitle("Height of Nursery webs per species")
+
+```
+
+
+###  Vegetation structure around Nursery webs 
+
+
+- Nurserys are almost never placed in shaded areas 
+- for Plantarius Carex is very dominant as a host plant, fimbriatus is more variable   
+
+
+
+```{r echo=FALSE}
+
+### avg Height ~ Species ####
+p1 <- ggplot(Nursery, aes(x=Species, y=avgHeight)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Average Vegetation Height")
+
+### horizontal veg cover 10 cm ~ Species ####
+p2 <-ggplot(Nursery, aes(x=Species, y=horizCover10cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+### horizontal veg cover 30 cm ~ Species ####
+p3 <- ggplot(Nursery, aes(x=Species, y=horizCover30cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+### horizontal veg cover 50 cm ~ Species ####
+p4 <- ggplot(Nursery, aes(x=Species, y=horizCover50cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)
+
+
+### max height ~ Species ####
+p5 <- ggplot(Nursery, aes(x=Species, y=maxHeight)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Maximum Vegetation Height")
+
+
+
+##### Humidity ##### 
+p6 <- ggplot(Nursery, aes(x=Species, y=humidityGround)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Humidity at Ground Level")
+
+p7 <- ggplot(Nursery, aes(x=Species, y=humidity20cm)) + 
+  geom_boxplot(outlier.colour="red", outlier.shape=8,
+               outlier.size=4)+
+  ggtitle("Humidity at 20 cm Height")
+
+
+
+grid.arrange(p1, p5, 
+             nrow = 1)
+grid.arrange(p2,p3, p4, 
+             nrow = 1, 
+             top = "Horizontal Vegetation Cover at 10 / 30 / 50  cm Height" )
+grid.arrange(p6, p7, nrow = 1, newpage = TRUE)
+
+```
+
+
+
+# Analysis Plans 
+
+**1. Microhabitat**
+- several small questions (not too many predictors possible due to small sample size)
+- mixed models with site as random effect 
+
+**2. Detectability **
+- unmarked package 
+- spatial instead of temporal replicates 
+- multilevel encounter history (on site / transect-band / plot level)
+- species-interaction response possible (s. material from Brett)
+
+**3. Nursery - placement**
+- regression with presence/ absence of nursery in plot as response
+- poisson respone, including count of nursery 
+
+
+### Detection probability
+
+- Species + Weather variables + Presence of nursery webs + Vegetation measures + habitat structure (narrow riparian or wide homogenious habitat as e.g. a bog?)
+- unmarked models estimate this automatically 
+- otherwise 
+
+
+### Identification probability 
+
+How was spider identified? + Nursery/  spider/ both found  + previous determination + known / estimated timing of breeding season.. 
+
+[this is not really possible as we did not collect this information, with a few exceptions. But I would like to write the model including this (if possible), just because Dolomedes are one example for species with a long history of misidentifications, even if we do not have much to give to the model here. It will probably not be integrated in the model I can use in the end, but at least I would like to discuss it.]
+
+- If the species was detected wrong, then it is not only a wrong 0, but also a wrong 1. So this is probably quite tricky! There are models existent for false 0's and false 1's, e.g. in unmarked 
+
+
+### Occupancy probability 
+
+**DolomedesFimb (1/0) ~ **  
+**DolomedesPlant (1/0) ~ **  
+**Dolomedes (1/0)  ~**  
+**Both Species (1/0) ~ **  
+**Multispecies (1/0 interacting with 1/ 0) ~**
+
+ ~ vegetation & habitat variables + identification probability + detection probability
+
+
+
+# Nursery Placement 
+
+**Nursery (1/ 0) ~** (Bernoulli)
+**Count of nurserys ~ ** (Poisson)
+
+~ Carex +  Species of Dolomedes + crossing structures + sun / shade  (e.g.)
+
